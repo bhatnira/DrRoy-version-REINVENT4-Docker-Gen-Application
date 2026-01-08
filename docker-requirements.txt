@@ -55,3 +55,6 @@ descriptastorus>=2.6.1
 
 # Development and testing
 pytest>=7.0.0
+
+# ADMET prediction
+admet-ai>=0.3.3

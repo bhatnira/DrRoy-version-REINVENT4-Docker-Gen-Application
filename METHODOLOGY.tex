@@ -1,0 +1,311 @@
+\documentclass[11pt]{article}
+\usepackage{amsmath, amssymb, bm}
+\usepackage{geometry}
+\usepackage{setspace}
+\geometry{margin=1in}
+\onehalfspacing
+
+\begin{document}
+
+\title{REINVENT4 Web Application: Multi-Objective Molecular Generation\\
+with QSAR Activity Prediction and ADMET-AI Integration}
+\author{}
+\date{}
+\maketitle
+
+\section*{Abstract}
+We describe an integrated web-based framework for AI-driven drug discovery that combines the REINVENT4 generative molecular modeling platform with Gaussian Process Regression (GPR) for QSAR activity prediction and ADMET-AI for pharmacokinetic property assessment. The framework supports four molecular generation paradigms—de novo generation, scaffold hopping, linker design, and R-group replacement—each optimized through reinforcement learning with curriculum-based multi-objective reward functions. The system enables end-to-end optimization of small-molecule candidates balancing predicted biological activity (in $\mu$M), drug-likeness, synthetic accessibility, and ADMET properties.
+
+\section{Problem Formulation}
+
+Let $\mathcal{M}$ denote the chemical space of valid small molecules, represented as SMILES strings or molecular graphs. The goal is to learn a generative model that proposes molecules $m \in \mathcal{M}$ with:
+\begin{itemize}
+    \item High predicted biological activity (low IC$_{50}$ in $\mu$M)
+    \item Favorable ADMET profile (solubility, clearance, bioavailability, toxicity)
+    \item Good drug-likeness (QED score)
+    \item Synthetic accessibility (SA score)
+\end{itemize}
+
+\section{Generative Model Architecture}
+
+Let $\pi_\theta(m)$ denote a recurrent neural network (RNN)-based molecular generation policy parameterized by $\theta$. The model uses SMILES string representation and generates molecules token-by-token:
+\begin{equation}
+\pi_\theta(m) = \prod_{t=1}^{T} P(c_t \mid c_{<t}; \theta),
+\end{equation}
+where $c_t$ represents the $t$-th character/token in the SMILES string, and $c_{<t}$ denotes all preceding tokens.
+
+Molecules are sampled as:
+\begin{equation}
+m \sim \pi_\theta(m).
+\end{equation}
+
+\paragraph{Four Generation Modes.}
+The REINVENT4 platform implements four chemically constrained generation modes:
+\begin{enumerate}
+    \item \textbf{De novo generation}: Unconditional sampling from the full chemical space learned from prior training data.
+    
+    \item \textbf{Scaffold hopping}: Generation conditioned on preserving core scaffold structures while varying substituents. Given scaffold $s$, sample:
+    \begin{equation}
+    m \sim \pi_\theta(m \mid \text{scaffold}=s).
+    \end{equation}
+    
+    \item \textbf{Linker design}: Generation of molecular linkers connecting two fixed fragment endpoints $f_1$ and $f_2$:
+    \begin{equation}
+    m \sim \pi_\theta(m \mid \text{fragments}=\{f_1, f_2\}).
+    \end{equation}
+    
+    \item \textbf{R-group replacement}: Selective modification of R-groups on a core molecular scaffold while maintaining attachment points.
+\end{enumerate}
+
+\section{QSAR Activity Prediction via Gaussian Process Regression}
+
+\subsection{Model Architecture}
+A Gaussian Process Regression (GPR) model predicts biological activity from molecular fingerprints. Given molecule $m$, the workflow is:
+
+\paragraph{Step 1: Fingerprint Generation.}
+Compute 1024-bit Morgan circular fingerprints with radius $r=2$:
+\begin{equation}
+\mathbf{x}(m) = \text{MorganFP}(m; r=2, \text{nBits}=1024) \in \{0,1\}^{1024}.
+\end{equation}
+
+\paragraph{Step 2: Feature Scaling.}
+Apply pre-trained standardization:
+\begin{equation}
+\mathbf{x}_{\text{scaled}} = \frac{\mathbf{x}(m) - \boldsymbol{\mu}_{\text{train}}}{\boldsymbol{\sigma}_{\text{train}}},
+\end{equation}
+where $\boldsymbol{\mu}_{\text{train}}$ and $\boldsymbol{\sigma}_{\text{train}}$ are mean and standard deviation computed from training data.
+
+\paragraph{Step 3: GPR Prediction.}
+The GPR model with Radial Basis Function (RBF) kernel predicts activity on the log$_{10}$ scale:
+\begin{equation}
+\hat{y}_{\log}(m) = \mathbb{E}[\log_{10}(\text{IC}_{50}) \mid \mathbf{x}_{\text{scaled}}].
+\end{equation}
+
+\paragraph{Step 4: Conversion to Micromolar Units.}
+Transform to micromolar concentration:
+\begin{equation}
+\hat{y}_{\mu\text{M}}(m) = 10^{\hat{y}_{\log}(m)}.
+\end{equation}
+
+\paragraph{Step 5: Activity Score Normalization.}
+Convert to optimization-friendly score in $[0,1]$ where higher is better (lower IC$_{50}$ is better):
+\begin{equation}
+f_{\text{activity}}(m) = \frac{1}{1 + \hat{y}_{\mu\text{M}}(m) / \kappa},
+\end{equation}
+where $\kappa = 10$ $\mu$M is a reference potency threshold.
+
+\section{ADMET Property Prediction via ADMET-AI}
+
+\subsection{Model Architecture}
+ADMET-AI is a pre-trained transformer-based deep learning model that predicts multiple pharmacokinetic endpoints simultaneously from SMILES strings.
+
+\subsection{ADMET Endpoints}
+For molecule $m$, ADMET-AI predicts:
+
+\paragraph{1. Aqueous Solubility.}
+\begin{equation}
+\text{Sol}(m) = \log_{10}(\text{Solubility in mol/L}),
+\end{equation}
+typically in range $[-6, 0]$. Normalized score:
+\begin{equation}
+f_{\text{sol}}(m) = \frac{\text{Sol}(m) + 6}{6}.
+\end{equation}
+
+\paragraph{2. Hepatic Clearance.}
+\begin{equation}
+\text{CL}_{\text{hepa}}(m) \text{ in mL/min/kg},
+\end{equation}
+typically in range $[0, 15]$. Lower clearance is better:
+\begin{equation}
+f_{\text{CL}}(m) = 1 - \frac{\text{CL}_{\text{hepa}}(m)}{15}.
+\end{equation}
+
+\paragraph{3. Oral Bioavailability.}
+\begin{equation}
+F_{20}(m) \in [0,1],
+\end{equation}
+representing fraction absorbed. Higher is better:
+\begin{equation}
+f_{\text{bioav}}(m) = F_{20}(m).
+\end{equation}
+
+\paragraph{4. Clinical Toxicity.}
+\begin{equation}
+\text{ClinTox}(m) \in [0,1],
+\end{equation}
+representing probability of clinical toxicity. Lower is better:
+\begin{equation}
+f_{\text{tox}}(m) = 1 - \text{ClinTox}(m).
+\end{equation}
+
+\section{Drug-Likeness and Synthetic Accessibility}
+
+\subsection{Quantitative Estimate of Drug-likeness (QED)}
+Computed via RDKit using Bickerton's desirability functions:
+\begin{equation}
+f_{\text{QED}}(m) = \text{QED}(m) \in [0,1].
+\end{equation}
+
+\subsection{Synthetic Accessibility (SA) Score}
+Estimated using fragment-based complexity:
+\begin{equation}
+\text{SA}_{\text{raw}}(m) \in [1, 10],
+\end{equation}
+where lower is better. Normalized:
+\begin{equation}
+f_{\text{SA}}(m) = 1 - \frac{\text{SA}_{\text{raw}}(m) - 1}{9}.
+\end{equation}
+
+\section{Multi-Objective Scalar Reward Function}
+
+The complete objective vector for molecule $m$ is:
+\begin{equation}
+\mathbf{f}(m) = \left(
+f_{\text{activity}}(m),
+f_{\text{sol}}(m),
+f_{\text{CL}}(m),
+f_{\text{bioav}}(m),
+f_{\text{tox}}(m),
+f_{\text{QED}}(m),
+f_{\text{SA}}(m)
+\right).
+\end{equation}
+
+The scalar reward combines these via weighted sum:
+\begin{equation}
+R(m) = \sum_{i} w_i \, f_i(m) - \sum_{j} \lambda_j \, \max\!\left(0, g_j(m)\right),
+\end{equation}
+where:
+\begin{itemize}
+    \item $w_i \ge 0$ are user-defined weights (e.g., $w_{\text{activity}}=0.3$, $w_{\text{QED}}=0.2$)
+    \item $g_j(m)$ capture hard constraints:
+    \begin{align}
+    g_1(m) &= \text{MW}(m) - 600 \text{ Da}, \\
+    g_2(m) &= \text{LogP}(m) - 5, \\
+    g_3(m) &= 1 - \text{Valid}(m).
+    \end{align}
+    \item $\lambda_j$ are penalty coefficients.
+\end{itemize}
+
+\section{Policy Optimization via Reinforcement Learning}
+
+\subsection{Objective}
+Maximize expected reward over the generative policy:
+\begin{equation}
+\theta^* = \arg\max_{\theta} \mathbb{E}_{m \sim \pi_\theta} \big[ R(m) \big].
+\end{equation}
+
+\subsection{REINVENT4 Algorithm}
+Uses augmented hill-climbing with experience replay:
+\begin{enumerate}
+    \item Sample batch of molecules: $\mathcal{B} = \{m_1, \ldots, m_N\} \sim \pi_\theta$
+    \item Compute rewards: $R_i = R(m_i)$ for all $i$
+    \item Select top-$k$ molecules by reward: $\mathcal{B}_{\text{elite}}$
+    \item Update policy via maximum likelihood on elite molecules:
+    \begin{equation}
+    \mathcal{L}(\theta) = -\frac{1}{|\mathcal{B}_{\text{elite}}|} \sum_{m \in \mathcal{B}_{\text{elite}}} \log \pi_\theta(m).
+    \end{equation}
+    \item Add elite molecules to memory buffer for replay
+    \item Repeat for $T$ iterations
+\end{enumerate}
+
+\section{Curriculum Learning Strategy}
+
+Training progresses through increasingly complex objective combinations:
+
+\paragraph{Stage 1 (Epochs 0--50): Foundation.}
+Focus on validity and basic drug-likeness:
+\begin{equation}
+R^{(1)}(m) = 0.7 \cdot \text{Valid}(m) + 0.3 \cdot f_{\text{QED}}(m).
+\end{equation}
+
+\paragraph{Stage 2 (Epochs 50--100): Chemical Feasibility.}
+Introduce synthetic accessibility:
+\begin{equation}
+R^{(2)}(m) = 0.5 \cdot \text{Valid}(m) + 0.3 \cdot f_{\text{QED}}(m) + 0.2 \cdot f_{\text{SA}}(m).
+\end{equation}
+
+\paragraph{Stage 3 (Epochs 100--150): Biological Activity.}
+Add QSAR activity prediction:
+\begin{equation}
+R^{(3)}(m) = 0.3 \cdot \text{Valid}(m) + 0.2 \cdot f_{\text{QED}}(m) + 0.2 \cdot f_{\text{SA}}(m) + 0.3 \cdot f_{\text{activity}}(m).
+\end{equation}
+
+\paragraph{Stage 4 (Epochs 150+): Full Multi-Objective.}
+Complete ADMET profile integration:
+\begin{equation}
+\begin{split}
+R^{(4)}(m) = &\, 0.2 \cdot f_{\text{QED}}(m) + 0.15 \cdot f_{\text{SA}}(m) + 0.3 \cdot f_{\text{activity}}(m) \\
+&\, + 0.0875 \cdot f_{\text{sol}}(m) + 0.0875 \cdot f_{\text{CL}}(m) \\
+&\, + 0.0875 \cdot f_{\text{bioav}}(m) + 0.0875 \cdot f_{\text{tox}}(m).
+\end{split}
+\end{equation}
+
+\section{Implementation Architecture}
+
+\subsection{Software Stack}
+\begin{itemize}
+    \item \textbf{Frontend}: Streamlit web interface with iOS-style design
+    \item \textbf{Backend}: Python 3.10, PyTorch, RDKit
+    \item \textbf{QSAR Model}: scikit-learn GPR with pre-trained artifacts (\texttt{final\_gpr.pkl}, \texttt{scaler.pkl}, \texttt{x\_cols.csv})
+    \item \textbf{ADMET Model}: ADMET-AI library (transformer-based)
+    \item \textbf{Deployment}: Docker containerization, port 8501
+\end{itemize}
+
+\subsection{Workflow Integration}
+\begin{enumerate}
+    \item User selects generation mode and configures objectives via web UI
+    \item System initializes pre-trained REINVENT4 prior model
+    \item Reinforcement learning loop:
+    \begin{itemize}
+        \item Generate molecule batch from $\pi_\theta$
+        \item Compute Morgan fingerprints
+        \item Predict activity via GPR: $\hat{y}_{\mu\text{M}}$
+        \item Predict ADMET via ADMET-AI
+        \item Calculate scalar reward $R(m)$
+        \item Update policy parameters $\theta$
+    \end{itemize}
+    \item Results displayed with columns: SMILES, Activity ($\mu$M), Activity Score, Solubility, Clearance, Bioavailability, Toxicity, QED, SA
+    \item User can export optimized molecules as CSV/SDF
+\end{enumerate}
+
+\section{Optimization Results Display}
+
+Final optimized molecules are presented with:
+\begin{itemize}
+    \item \textbf{Activity\_Raw\_uM}: Predicted IC$_{50}$ in $\mu$M (lower is better)
+    \item \textbf{Activity\_Score}: Normalized activity score $\in [0,1]$
+    \item \textbf{Solubility\_LogS}: LogS solubility
+    \item \textbf{Hepatic\_Clearance}: Clearance rate in mL/min/kg
+    \item \textbf{Bioavailability}: Oral bioavailability fraction
+    \item \textbf{Clinical\_Toxicity}: Toxicity probability
+    \item \textbf{QED}: Drug-likeness score
+    \item \textbf{Similarity}: Tanimoto similarity to starting molecule
+    \item \textbf{Molecular\_Weight}: MW in Daltons
+    \item \textbf{LogP}: Lipophilicity
+\end{itemize}
+
+\section{Active Learning Extension}
+
+For expensive experimental validation, molecules can be selected via acquisition function:
+\begin{equation}
+\mathcal{A}(m) = \mu_{\text{GPR}}(m) + \beta \, \sigma_{\text{GPR}}(m),
+\end{equation}
+where $\mu_{\text{GPR}}$ is predicted mean activity, $\sigma_{\text{GPR}}$ is predictive uncertainty from GPR, and $\beta$ controls exploration--exploitation trade-off.
+
+\section{Advantages of This Framework}
+
+\begin{enumerate}
+    \item \textbf{End-to-end optimization}: Unified pipeline from generation to ADMET prediction
+    \item \textbf{Probabilistic activity prediction}: GPR provides uncertainty estimates for active learning
+    \item \textbf{Multi-endpoint ADMET}: Comprehensive pharmacokinetic assessment via ADMET-AI
+    \item \textbf{Curriculum learning}: Stable training with gradual objective complexity increase
+    \item \textbf{Multiple generation modes}: Flexibility for diverse medicinal chemistry scenarios
+    \item \textbf{User-friendly interface}: Web-based GUI accessible without programming expertise
+    \item \textbf{Reproducible deployment}: Docker containerization ensures consistent environment
+\end{enumerate}
+
+\section*{Summary}
+This REINVENT4-based web application provides a production-ready framework for multi-objective molecular generation, integrating state-of-the-art GPR-based QSAR activity prediction and transformer-based ADMET profiling. The curriculum learning strategy enables stable training across diverse chemical objectives, while the modular architecture supports easy extension to new therapeutic targets and property prediction models. The system bridges the gap between AI-driven generative modeling and practical drug discovery workflows.
+
+\end{document}

@@ -1,7 +1,5 @@
 #!/bin/bash
-"""
-Startup script for REINVENT4 Streamlit application in Docker container
-"""
+# Startup script for REINVENT4 Streamlit application in Docker container
 
 # Set environment variables
 export PYTHONUNBUFFERED=1

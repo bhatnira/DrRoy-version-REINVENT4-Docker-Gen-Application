@@ -27,3 +27,4 @@ torchvision>=0.15.0
 # Optional: For advanced molecular descriptors
 # Note: Some REINVENT4 dependencies may need to be installed separately
 # depending on your specific deployment environment
+admet-ai>=0.3.3

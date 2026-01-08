@@ -1469,14 +1469,32 @@ def show_denovo_optimization_step():
         # Multi-objective scoring
         objectives = {}
         
-        if st.checkbox("Drug-likeness (QED)", value=True):
+        # QSAR Activity Prediction
+        if st.checkbox("QSAR Activity Prediction (μM)", value=False, key="denovo_activity_checkbox"):
+            objectives['activity_weight'] = st.slider("Activity Weight", 0.0, 1.0, 0.3, key="denovo_activity_weight")
+        
+        # ADMET Endpoints
+        if st.checkbox("ADMET Endpoints", value=False, key="denovo_admet_checkbox"):
+            admet_endpoints = st.multiselect(
+                "Select ADMET Properties:",
+                ["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                default=["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                key="denovo_admet_eps"
+            )
+            if admet_endpoints:
+                objectives['admet_endpoints'] = admet_endpoints
+                for ep in admet_endpoints:
+                    ep_key = ep.replace(" ", "_").lower()
+                    objectives[f'admet_{ep_key}_weight'] = st.slider(f"{ep} Weight", 0.0, 1.0, 0.3, key=f"denovo_admet_{ep_key}_weight")
+        
+        if st.checkbox("Drug-likeness (QED)", value=True, key="denovo_qed_checkbox"):
             objectives['qed_weight'] = st.slider("QED Weight", 0.0, 1.0, 0.3, key="denovo_qed_weight")
         
-        if st.checkbox("Synthetic Accessibility", value=True):
+        if st.checkbox("Synthetic Accessibility", value=True, key="denovo_sa_checkbox"):
             objectives['sa_weight'] = st.slider("SA Score Weight", 0.0, 1.0, 0.2, key="denovo_sa_weight")
         
-        if st.checkbox("Target Similarity", value=False):
-            target_smiles = st.text_input("Target SMILES")
+        if st.checkbox("Target Similarity", value=False, key="denovo_target_similarity_checkbox"):
+            target_smiles = st.text_input("Target SMILES", key="denovo_target_smiles")
             if target_smiles:
                 objectives['similarity_weight'] = st.slider("Similarity Weight", 0.0, 1.0, 0.5, key="denovo_similarity_weight")
                 objectives['target_smiles'] = target_smiles
@@ -4109,16 +4127,34 @@ def show_scaffold_optimization_step():
         
         objectives = {}
         
-        if st.checkbox("Scaffold Diversity", value=True):
+        # QSAR Activity Prediction
+        if st.checkbox("QSAR Activity Prediction (μM)", value=False, key="scaffold_activity_checkbox"):
+            objectives['activity_weight'] = st.slider("Activity Weight", 0.0, 1.0, 0.3, key="scaffold_activity_weight")
+        
+        # ADMET Endpoints
+        if st.checkbox("ADMET Endpoints", value=False, key="scaffold_admet_checkbox"):
+            admet_endpoints = st.multiselect(
+                "Select ADMET Properties:",
+                ["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                default=["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                key="scaffold_admet_eps"
+            )
+            if admet_endpoints:
+                objectives['admet_endpoints'] = admet_endpoints
+                for ep in admet_endpoints:
+                    ep_key = ep.replace(" ", "_").lower()
+                    objectives[f'admet_{ep_key}_weight'] = st.slider(f"{ep} Weight", 0.0, 1.0, 0.3, key=f"scaffold_admet_{ep_key}_weight")
+        
+        if st.checkbox("Scaffold Diversity", value=True, key="scaffold_diversity_checkbox"):
             objectives['diversity_weight'] = st.slider("Diversity Weight", 0.0, 1.0, 0.4, key="scaffold_diversity_weight")
         
-        if st.checkbox("Drug-likeness (QED)", value=True):
+        if st.checkbox("Drug-likeness (QED)", value=True, key="scaffold_qed_checkbox"):
             objectives['qed_weight'] = st.slider("QED Weight", 0.0, 1.0, 0.3, key="scaffold_qed_weight")
         
-        if st.checkbox("Synthetic Accessibility", value=True):
+        if st.checkbox("Synthetic Accessibility", value=True, key="scaffold_sa_checkbox"):
             objectives['sa_weight'] = st.slider("SA Score Weight", 0.0, 1.0, 0.2, key="scaffold_sa_weight")
         
-        if st.checkbox("Scaffold Novelty", value=True):
+        if st.checkbox("Scaffold Novelty", value=True, key="scaffold_novelty_checkbox"):
             objectives['novelty_weight'] = st.slider("Novelty Weight", 0.0, 1.0, 0.1, key="scaffold_novelty_weight")
     
     # Start optimization
@@ -4472,6 +4508,166 @@ def show_scaffold_training_evaluation(metrics, config, training_type):
     except ImportError:
         st.info("📊 Training visualization requires plotly.")
 
+def extract_scaffold_change(original_scaffold, generated_smiles, generation_mode):
+    """
+    Extract what scaffold was added or changed in scaffold hopping/decoration.
+    Returns a string describing the new scaffold or decorations.
+    """
+    import re
+    
+    try:
+        if generation_mode == "Scaffold Decoration":
+            # For decoration, identify the R-groups that were added
+            # Remove the original scaffold pattern from generated SMILES
+            attachment_pattern = r'\[\*:\d+\]'
+            clean_scaffold = re.sub(attachment_pattern, '', original_scaffold)
+            
+            # Try to identify what was added
+            # This is a simplified heuristic
+            if len(generated_smiles) > len(clean_scaffold):
+                # Something was added
+                added_length = len(generated_smiles) - len(clean_scaffold)
+                return f"Added {added_length} atoms (R-groups)"
+            else:
+                return "Decorated"
+        
+        elif generation_mode == "Scaffold Hopping":
+            # For hopping, try to identify the new core scaffold
+            # Common ring systems to detect
+            scaffold_patterns = {
+                'c1ccccc1': 'Benzene',
+                'c1ccncc1': 'Pyridine',
+                'c1cccnc1': 'Pyrimidine',
+                'c1ccoc1': 'Furan',
+                'c1ccsc1': 'Thiophene',
+                'c1cnccn1': 'Pyrazine',
+                'C1CCCCC1': 'Cyclohexane',
+                'c1ccc2ccccc2c1': 'Naphthalene',
+                'c1ccc2[nH]ccc2c1': 'Indole',
+                'c1ccc2nc3ccccc3cc2c1': 'Acridine'
+            }
+            
+            # Check if any known scaffold pattern appears in generated SMILES
+            for pattern, name in scaffold_patterns.items():
+                if pattern in generated_smiles.lower():
+                    return name
+            
+            # If no known pattern, try to identify ring system
+            ring_matches = re.findall(r'[cCnNoOsS]1[cCnNoOsS]{3,8}1', generated_smiles)
+            if ring_matches:
+                return f"New ring: {ring_matches[0]}"
+            
+            return "New scaffold"
+        
+        else:  # Hybrid mode
+            return "Hybrid modification"
+            
+    except Exception as e:
+        return "Modified"
+
+def extract_decoration_added(original_smiles, new_smiles):
+    """
+    Extract what was added/changed between original and new molecule.
+    Returns a string describing the decorations or changes.
+    """
+    import re
+    
+    try:
+        # Calculate the difference in length
+        length_diff = len(new_smiles) - len(original_smiles)
+        
+        # Try to identify what functional groups were added
+        # Common functional groups to detect
+        functional_groups = {
+            'CF3': 'Trifluoromethyl',
+            'CF': 'Fluoromethyl',
+            'Cl': 'Chloro',
+            'Br': 'Bromo',
+            'CN': 'Cyano',
+            'CO': 'Carbonyl',
+            'OH': 'Hydroxyl',
+            'NH2': 'Amino',
+            'NO2': 'Nitro',
+            'SO2': 'Sulfonyl',
+            'OC': 'Methoxy',
+            'NC': 'Methylamino',
+        }
+        
+        added_groups = []
+        for pattern, name in functional_groups.items():
+            # Check if pattern is in new but not in original
+            if pattern in new_smiles and pattern not in original_smiles:
+                added_groups.append(name)
+        
+        if added_groups:
+            return f"Added: {', '.join(added_groups[:3])}"  # Show up to 3 groups
+        elif length_diff > 0:
+            return f"Added {length_diff} atoms"
+        elif length_diff < 0:
+            return f"Removed {abs(length_diff)} atoms"
+        else:
+            return "Modified structure"
+            
+    except Exception as e:
+        return "Decorated"
+
+def mark_scaffold_location(original_scaffold, molecule_smiles, is_original=True):
+    """
+    Mark the scaffold location in the molecule SMILES with visual indicators.
+    For original: highlights the old scaffold
+    For new: highlights the new scaffold
+    """
+    import re
+    
+    try:
+        # Remove attachment points from scaffold to get core structure
+        attachment_pattern = r'\[\*:\d+\]'
+        core_scaffold = re.sub(attachment_pattern, '', original_scaffold)
+        
+        # Common ring patterns to detect and mark
+        ring_patterns = [
+            (r'c1ccccc1', '[BENZENE]'),
+            (r'c1ccncc1', '[PYRIDINE]'),
+            (r'c1cccnc1', '[PYRIMIDINE]'),
+            (r'c1ccoc1', '[FURAN]'),
+            (r'c1ccsc1', '[THIOPHENE]'),
+            (r'c1cnccn1', '[PYRAZINE]'),
+            (r'C1CCCCC1', '[CYCLOHEXANE]'),
+            (r'c1ccc2ccccc2c1', '[NAPHTHALENE]'),
+        ]
+        
+        # Try to identify and mark the scaffold
+        marked_smiles = molecule_smiles
+        for pattern, marker in ring_patterns:
+            if pattern in marked_smiles:
+                if is_original:
+                    # Mark original scaffold with <<OLD>>
+                    marked_smiles = marked_smiles.replace(pattern, f'<<{marker}>>', 1)
+                else:
+                    # Mark new scaffold with **NEW**
+                    marked_smiles = marked_smiles.replace(pattern, f'**{marker}**', 1)
+                break
+        
+        return marked_smiles
+        
+    except Exception as e:
+        return molecule_smiles
+
+def mark_decoration_location(original_smiles, new_smiles):
+    """
+    Mark where decorations/R-groups were added in the new molecule.
+    """
+    try:
+        # Simple approach: find what's different and mark it
+        if len(new_smiles) > len(original_smiles):
+            # Something was added - mark the end part as decoration
+            added_part = new_smiles[len(original_smiles):]
+            return f"{original_smiles}**[{added_part}]**"
+        else:
+            return new_smiles
+    except Exception as e:
+        return new_smiles
+
 def run_scaffold_generation(config):
     """Run scaffold generation"""
     try:
@@ -4499,18 +4695,30 @@ def run_scaffold_generation(config):
             
             # Generate molecules for this scaffold
             for j in range(min(num_molecules_per_scaffold, 50)):  # Limit for demo
-                # Simulate scaffold hopping/decoration
+                # First, create an original molecule from the scaffold (for display)
+                original_molecule = simulate_scaffold_decoration(scaffold)
+                original_molecule_smiles = clean_generated_molecule(original_molecule)
+                
+                # Now apply scaffold hopping/decoration to create new molecule
+                original_with_positions = original_molecule_smiles  # Default
                 if generation_mode == "Scaffold Hopping":
-                    # Generate alternative scaffolds
-                    modified_scaffold = simulate_scaffold_hopping(scaffold)
+                    # Generate alternative scaffolds - pass original molecule to preserve substituents
+                    new_molecule_smiles, new_scaffold_name, original_with_positions = simulate_scaffold_hopping(scaffold, original_molecule_smiles)
+                    new_scaffold_part = new_scaffold_name
                 elif generation_mode == "Scaffold Decoration":
                     # Add R-groups to scaffold
                     modified_scaffold = simulate_scaffold_decoration(scaffold)
+                    new_molecule_smiles = clean_generated_molecule(modified_scaffold)
+                    # Extract what was added
+                    new_scaffold_part = extract_decoration_added(original_molecule_smiles, new_molecule_smiles)
                 else:  # Hybrid mode
                     if random.random() < 0.5:
-                        modified_scaffold = simulate_scaffold_hopping(scaffold)
+                        new_molecule_smiles, new_scaffold_name, original_with_positions = simulate_scaffold_hopping(scaffold, original_molecule_smiles)
+                        new_scaffold_part = new_scaffold_name
                     else:
                         modified_scaffold = simulate_scaffold_decoration(scaffold)
+                        new_molecule_smiles = clean_generated_molecule(modified_scaffold)
+                        new_scaffold_part = extract_decoration_added(original_molecule_smiles, new_molecule_smiles)
                 
                 # Calculate properties
                 nll = random.uniform(-6, -1)
@@ -4519,8 +4727,9 @@ def run_scaffold_generation(config):
                 scaffold_similarity = random.uniform(0.2, 0.8) if generation_mode != "Scaffold Decoration" else random.uniform(0.7, 1.0)
                 
                 generated_molecules.append({
-                    'Original_Scaffold': scaffold,
-                    'Generated_SMILES': clean_generated_molecule(modified_scaffold),
+                    'Original_Molecule': original_with_positions,  # Now includes position markers
+                    'Scaffold_Change': new_scaffold_part,
+                    'New_Molecule': new_molecule_smiles,
                     'Generation_Mode': generation_mode,
                     'NLL': nll,
                     'Molecular_Weight': mw,
@@ -4554,45 +4763,135 @@ def run_scaffold_generation(config):
     except Exception as e:
         st.error(f"❌ Error during scaffold generation: {str(e)}")
 
-def simulate_scaffold_hopping(scaffold):
-    """Simulate scaffold hopping - replace core scaffold while maintaining attachment points"""
+def add_position_markers_to_scaffold(smiles, pattern):
+    """
+    Add position markers to show where scaffold hopping occurs.
+    Returns the SMILES with position numbers marking the scaffold location.
+    """
     import re
     
-    # First, extract and preserve attachment points
-    attachment_pattern = r'\[\*:\d+\]'
-    attachments = re.findall(attachment_pattern, scaffold)
+    # Find the scaffold position in the molecule
+    match = re.search(pattern, smiles)
+    if match:
+        start_pos = match.start()
+        end_pos = match.end()
+        
+        # Insert position markers around the scaffold
+        # Use atom numbers in brackets to indicate the hopping region
+        before = smiles[:start_pos]
+        scaffold_part = smiles[start_pos:end_pos]
+        after = smiles[end_pos:]
+        
+        # Add position indicators (using special notation)
+        marked_smiles = f"{before}[Scaffold@{start_pos}:{end_pos}]{scaffold_part}{after}"
+        return marked_smiles, start_pos, end_pos
     
-    # Alternative core scaffolds (without attachment points)
+    return smiles, None, None
+
+def simulate_scaffold_hopping(scaffold, original_molecule_smiles):
+    """
+    Simulate scaffold hopping - replace core scaffold while preserving substituents.
+    Takes the original molecule and replaces its core scaffold with a new one.
+    Returns: (new_molecule, change_description, original_with_positions)
+    """
+    import re
+    import random
+    
+    # Alternative core scaffolds
     core_alternatives = [
-        'c1ccccc1',      # benzene
-        'c1ccncc1',      # pyridine
-        'c1cccnc1',      # pyrimidine
-        'c1ccoc1',       # furan
-        'c1ccsc1',       # thiophene
-        'c1cnccn1',      # pyrazine
-        'c1cncnc1',      # pyrimidine variant
-        'c1cccc(c1)',    # benzene variant
-        'C1CCCCC1',      # cyclohexane
-        'c1ccc2ccccc2c1' # naphthalene
+        ('c1ccccc1', 'Benzene'),
+        ('c1ccncc1', 'Pyridine'),
+        ('c1cccnc1', 'Pyrimidine'),
+        ('c1ccoc1', 'Furan'),
+        ('c1ccsc1', 'Thiophene'),
+        ('c1cnccn1', 'Pyrazine'),
+        ('C1CCCCC1', 'Cyclohexane'),
     ]
     
-    # Remove attachment points to get core scaffold
-    core_only = re.sub(attachment_pattern, '', scaffold)
+    # Choose a random new scaffold
+    new_core, new_name = random.choice(core_alternatives)
     
-    # Choose a new core scaffold
-    new_core = random.choice(core_alternatives)
+    # Extract the original core scaffold pattern from scaffold input
+    attachment_pattern = r'\[\*:\d+\]'
+    clean_scaffold = re.sub(attachment_pattern, '', scaffold)
     
-    # For demo, attach the groups to the new core
-    if attachments:
-        # Add first attachment point to the new core
-        result = new_core + random.choice(['C', 'CC', 'CCC', 'N', 'O', 'S', 'F', 'Cl'])
-        # If there are more attachment points, add more groups
-        for i in range(1, min(len(attachments), 3)):
-            result += random.choice(['C', 'CC', 'O', 'N', 'F'])
+    # For complex molecules, we need to intelligently replace the scaffold
+    # Strategy: Try to find the core ring in the molecule and replace it
+    
+    # Common ring patterns to detect (6-membered rings primarily)
+    ring_patterns = [
+        r'c1ccccc1',      # benzene
+        r'c1ccncc1',      # pyridine
+        r'c1cccnc1',      # pyrimidine
+        r'c1ccoc1',       # furan
+        r'c1ccsc1',       # thiophene
+        r'c1cnccn1',      # pyrazine
+        r'C1CCCCC1',      # cyclohexane
+        r'c1ccc2ccccc2c1', # naphthalene
+    ]
+    
+    new_molecule = original_molecule_smiles
+    original_with_positions = original_molecule_smiles
+    found_pattern = None
+    
+    # Try to replace any found ring pattern with the new scaffold
+    for pattern in ring_patterns:
+        if pattern in original_molecule_smiles:
+            # Find position of the scaffold
+            match = re.search(pattern, original_molecule_smiles)
+            if match:
+                start_pos = match.start()
+                end_pos = match.end()
+                
+                # Create position-marked version for display
+                before = original_molecule_smiles[:start_pos]
+                scaffold_part = original_molecule_smiles[start_pos:end_pos]
+                after = original_molecule_smiles[end_pos:]
+                
+                # Add position markers using [1] and [2] notation
+                original_with_positions = f"{before}[{start_pos}]{scaffold_part}[{end_pos}]{after}"
+                found_pattern = pattern
+            
+            # Replace first occurrence of the ring with new scaffold
+            new_molecule = original_molecule_smiles.replace(pattern, new_core, 1)
+            return new_molecule, f"{pattern.upper()} → {new_name}", original_with_positions
+    
+    # If no ring pattern found, try a simpler replacement
+    # Look for the clean scaffold in the molecule
+    if clean_scaffold and clean_scaffold in original_molecule_smiles:
+        match = re.search(re.escape(clean_scaffold), original_molecule_smiles)
+        if match:
+            start_pos = match.start()
+            end_pos = match.end()
+            before = original_molecule_smiles[:start_pos]
+            scaffold_part = original_molecule_smiles[start_pos:end_pos]
+            after = original_molecule_smiles[end_pos:]
+            original_with_positions = f"{before}[{start_pos}]{scaffold_part}[{end_pos}]{after}"
+        
+        new_molecule = original_molecule_smiles.replace(clean_scaffold, new_core, 1)
+        return new_molecule, f"Core → {new_name}", original_with_positions
+    
+    # Last resort: just combine new scaffold with parts of original
+    # This preserves at least some of the original molecule's complexity
+    # Take everything after first ring as substituents
+    match = re.search(r'[cC]1[cCnNoOsS]+1', original_molecule_smiles)
+    if match:
+        # Found a ring - take everything after it as substituents
+        start_pos = match.start()
+        end_pos = match.end()
+        before = original_molecule_smiles[:start_pos]
+        scaffold_part = original_molecule_smiles[start_pos:end_pos]
+        after = original_molecule_smiles[end_pos:]
+        original_with_positions = f"{before}[{start_pos}]{scaffold_part}[{end_pos}]{after}"
+        
+        substituents = original_molecule_smiles[end_pos:]
+        new_molecule = new_core + substituents
     else:
-        result = new_core + random.choice(['C', 'CC', 'N'])
+        # No ring found - just append to new scaffold
+        new_molecule = new_core + original_molecule_smiles[:20]  # Take first 20 chars as substituents
+        original_with_positions = f"[0]{original_molecule_smiles[:20]}[{len(new_core)}]"
     
-    return result
+    return new_molecule, new_name, original_with_positions
 
 def simulate_scaffold_decoration(scaffold):
     """Simulate scaffold decoration - replace attachment points with chemical groups"""
@@ -4872,7 +5171,7 @@ def run_scaffold_optimization(molecules, config):
     optimized_molecules = []
     for i, molecule in enumerate(selected_molecules):
         # Apply optimization transformations
-        optimized_smiles = apply_optimization_transform(molecule['Generated_SMILES'], objectives)
+        optimized_smiles = apply_optimization_transform(molecule.get('New_Molecule', molecule.get('Generated_SMILES', '')), objectives)
         
         # Calculate improved properties
         mw = molecule['Molecular_Weight'] + random.uniform(-10, 10)
@@ -4892,8 +5191,15 @@ def run_scaffold_optimization(molecules, config):
             objectives.get('novelty_weight', 0) * novelty_score
         )
         
+        # Get molecule information with new column names
+        original_molecule = molecule.get('Original_Molecule', molecule.get('Original_Scaffold', ''))
+        scaffold_change = molecule.get('Scaffold_Change', molecule.get('New_Scaffold', ''))
+        new_molecule_base = molecule.get('New_Molecule', molecule.get('Generated_SMILES', ''))
+        
         optimized_molecules.append({
-            'Original_SMILES': molecule['Generated_SMILES'],
+            'Original_Molecule': original_molecule,
+            'Scaffold_Change': scaffold_change,
+            'Original_SMILES': new_molecule_base,
             'Optimized_SMILES': optimized_smiles,
             'Molecular_Weight': mw,
             'LogP': logp,
@@ -5244,6 +5550,9 @@ def show_scaffold_optimization_results():
         for i, mol in enumerate(top_molecules, 1):
             display_data.append({
                 'Rank': i,
+                'Original_Molecule': mol.get('Original_Molecule', ''),
+                'Scaffold_Change': mol.get('Scaffold_Change', 'N/A'),
+                'New_Molecule': mol.get('Original_SMILES', ''),
                 'Optimized_SMILES': mol['Optimized_SMILES'],
                 'Composite_Score': f"{mol['Composite_Score']:.3f}",
                 'Diversity': f"{mol['Diversity_Score']:.3f}",
@@ -6590,16 +6899,34 @@ def show_linker_optimization_step():
         
         objectives = {}
         
-        if st.checkbox("Linker Quality", value=True):
+        # QSAR Activity Prediction
+        if st.checkbox("QSAR Activity Prediction (μM)", value=False, key="linker_activity_checkbox"):
+            objectives['activity_weight'] = st.slider("Activity Weight", 0.0, 1.0, 0.3, key="linker_activity_weight")
+        
+        # ADMET Endpoints
+        if st.checkbox("ADMET Endpoints", value=False, key="linker_admet_checkbox"):
+            admet_endpoints = st.multiselect(
+                "Select ADMET Properties:",
+                ["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                default=["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                key="linker_admet_eps"
+            )
+            if admet_endpoints:
+                objectives['admet_endpoints'] = admet_endpoints
+                for ep in admet_endpoints:
+                    ep_key = ep.replace(" ", "_").lower()
+                    objectives[f'admet_{ep_key}_weight'] = st.slider(f"{ep} Weight", 0.0, 1.0, 0.3, key=f"linker_admet_{ep_key}_weight")
+        
+        if st.checkbox("Linker Quality", value=True, key="linker_quality_checkbox"):
             objectives['quality_weight'] = st.slider("Quality Weight", 0.0, 1.0, 0.4, key="linker_quality_weight")
         
-        if st.checkbox("Flexibility", value=True):
+        if st.checkbox("Flexibility", value=True, key="linker_flexibility_checkbox"):
             objectives['flexibility_weight'] = st.slider("Flexibility Weight", 0.0, 1.0, 0.3, key="linker_flexibility_weight")
         
-        if st.checkbox("Drug-likeness (QED)", value=True):
+        if st.checkbox("Drug-likeness (QED)", value=True, key="linker_qed_checkbox"):
             objectives['qed_weight'] = st.slider("QED Weight", 0.0, 1.0, 0.2, key="linker_qed_weight")
         
-        if st.checkbox("Synthetic Accessibility", value=True):
+        if st.checkbox("Synthetic Accessibility", value=True, key="linker_sa_checkbox"):
             objectives['sa_weight'] = st.slider("SA Score Weight", 0.0, 1.0, 0.1, key="linker_sa_weight")
     
     # Start optimization
@@ -8815,16 +9142,34 @@ def show_rgroup_optimization_step():
         
         objectives = {}
         
-        if st.checkbox("R-Group Quality", value=True):
+        # QSAR Activity Prediction
+        if st.checkbox("QSAR Activity Prediction (μM)", value=False, key="rgroup_activity_checkbox"):
+            objectives['activity_weight'] = st.slider("Activity Weight", 0.0, 1.0, 0.3, key="rgroup_activity_weight")
+        
+        # ADMET Endpoints
+        if st.checkbox("ADMET Endpoints", value=False, key="rgroup_admet_checkbox"):
+            admet_endpoints = st.multiselect(
+                "Select ADMET Properties:",
+                ["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                default=["Solubility", "Hepatic Clearance", "Bioavailability", "Clinical Toxicity"],
+                key="rgroup_admet_eps"
+            )
+            if admet_endpoints:
+                objectives['admet_endpoints'] = admet_endpoints
+                for ep in admet_endpoints:
+                    ep_key = ep.replace(" ", "_").lower()
+                    objectives[f'admet_{ep_key}_weight'] = st.slider(f"{ep} Weight", 0.0, 1.0, 0.3, key=f"rgroup_admet_{ep_key}_weight")
+        
+        if st.checkbox("R-Group Quality", value=True, key="rgroup_quality_checkbox"):
             objectives['rgroup_quality_weight'] = st.slider("R-Group Quality Weight", 0.0, 1.0, 0.4, key="rgroup_quality_weight")
         
-        if st.checkbox("Drug-likeness (QED)", value=True):
+        if st.checkbox("Drug-likeness (QED)", value=True, key="rgroup_qed_checkbox"):
             objectives['qed_weight'] = st.slider("QED Weight", 0.0, 1.0, 0.3, key="rgroup_qed_weight")
         
-        if st.checkbox("Synthetic Accessibility", value=True):
+        if st.checkbox("Synthetic Accessibility", value=True, key="rgroup_sa_checkbox"):
             objectives['sa_weight'] = st.slider("SA Score Weight", 0.0, 1.0, 0.2, key="rgroup_sa_weight")
         
-        if st.checkbox("Scaffold Compatibility", value=True):
+        if st.checkbox("Scaffold Compatibility", value=True, key="rgroup_compatibility_checkbox"):
             objectives['compatibility_weight'] = st.slider("Compatibility Weight", 0.0, 1.0, 0.1, key="rgroup_compatibility_weight")
     
     # Start optimization
@@ -10986,7 +11331,7 @@ def run_molecule_optimization(molecules, model_file, optimization_type, num_step
         st.error(f"❌ Error during optimization: {str(e)}")
 
 def simulate_optimization_results(starting_molecules, num_steps):
-    """Simulate optimization results"""
+    """Simulate optimization results with QSAR Activity and ADMET predictions"""
     
     np.random.seed(42)
     data = []
@@ -11012,6 +11357,16 @@ def simulate_optimization_results(starting_molecules, num_steps):
             # Generate a slightly modified SMILES (simplified)
             optimized_smiles = start_mol + "C" if step > 0 else start_mol
             
+            # QSAR Activity Prediction (μM) - lower is better
+            activity_raw = np.exp(np.random.uniform(-2, 4))  # 0.13 to 54 μM range
+            activity_score = 1.0 / (1.0 + activity_raw / 10.0)  # Normalized score
+            
+            # ADMET Predictions
+            solubility = np.random.uniform(-4, 0)  # LogS
+            hepatic_clearance = np.random.uniform(0, 15)  # mL/min/kg
+            bioavailability = np.random.uniform(0, 1)  # 0-1 scale
+            clinical_toxicity = np.random.uniform(0, 1)  # 0-1 probability
+            
             data.append({
                 'Step': step,
                 'Starting_SMILES': start_mol,
@@ -11021,6 +11376,12 @@ def simulate_optimization_results(starting_molecules, num_steps):
                 'Similarity': similarity,
                 'Molecular_Weight': mw,
                 'LogP': logp,
+                'Activity_Raw_uM': activity_raw,
+                'Activity_Score': activity_score,
+                'Solubility_LogS': solubility,
+                'Hepatic_Clearance': hepatic_clearance,
+                'Bioavailability': bioavailability,
+                'Clinical_Toxicity': clinical_toxicity,
                 'Valid': np.random.choice([True, False], p=[0.9, 0.1])
             })
     
@@ -11773,13 +12134,13 @@ def show_scoring_page():
                 qed_transform = st.selectbox("QED Transform", ["linear", "sigmoid", "reverse_sigmoid"], key="qed_transform")
             
             # SA Score Component
-            use_sa_score = st.checkbox("Synthetic Accessibility", value=True)
+            use_sa_score = st.checkbox("Synthetic Accessibility", value=True, key="scoring_sa_checkbox")
             if use_sa_score:
                 sa_weight = st.slider("SA Score Weight", 0.0, 1.0, 0.2, 0.05, key="scoring_sa_weight")
                 sa_transform = st.selectbox("SA Transform", ["linear", "sigmoid", "reverse_sigmoid"], key="sa_transform")
             
             # Lipinski Component
-            use_lipinski = st.checkbox("Lipinski Rule of Five", value=False)
+            use_lipinski = st.checkbox("Lipinski Rule of Five", value=False, key="scoring_lipinski_checkbox")
             if use_lipinski:
                 lipinski_weight = st.slider("Lipinski Weight", 0.0, 1.0, 0.1, 0.05)
             
@@ -15268,6 +15629,110 @@ def show_documentation_page():
     - Python 3.10+
     - REINVENT4 dependencies installed
     """)
+
+# === Actual scoring helpers: QSAR Activity (GPR) and ADMET-AI ===
+import streamlit as st
+
+@st.cache_resource(show_spinner=False)
+def _load_gpr_artifacts(model_path: str = "final_gpr.pkl", scaler_path: str = "scaler.pkl", cols_path: str = "x_cols.csv"):
+    import pickle
+    import pandas as pd
+    with open(model_path, "rb") as f:
+        model = pickle.load(f)
+    with open(scaler_path, "rb") as f:
+        scaler = pickle.load(f)
+    # load feature columns
+    cols = None
+    try:
+        df = pd.read_csv(cols_path)
+        if df.shape[1] == 1:
+            cols = df.iloc[:, 0].astype(str).tolist()
+        else:
+            cols = df.columns.astype(str).tolist()
+    except Exception:
+        # fallback to default FP naming
+        cols = [f"FP_{i}" for i in range(1024)]
+    return model, scaler, cols
+
+
+def _morgan_fp_array(smiles: str, radius: int, nBits: int):
+    from rdkit import Chem
+    from rdkit.Chem import AllChem
+    mol = Chem.MolFromSmiles(smiles)
+    if mol is None:
+        return None
+    fp = AllChem.GetMorganFingerprintAsBitVect(mol, radius=radius, nBits=nBits)
+    arr = [0] * nBits
+    from rdkit import DataStructs
+    DataStructs.ConvertToNumpyArray(fp, arr)  # type: ignore
+    return arr
+
+
+def _predict_activity(smiles_list, radius=2, nBits=1024, log10_target=True):
+    import numpy as np
+    import pandas as pd
+    model, scaler, cols = _load_gpr_artifacts()
+    fps = []
+    valid_idx = []
+    for i, smi in enumerate(smiles_list):
+        arr = _morgan_fp_array(smi, radius, nBits)
+        if arr is None:
+            fps.append([np.nan] * nBits)
+        else:
+            fps.append(arr)
+            valid_idx.append(i)
+    X = pd.DataFrame(fps, columns=[f"FP_{i}" for i in range(nBits)])
+    for c in cols:
+        if c not in X.columns:
+            X[c] = 0
+    X = X[cols]
+    X_scaled = scaler.transform(X.values)
+    preds = model.predict(X_scaled)
+    if log10_target:
+        try:
+            preds = np.power(10.0, preds)
+        except Exception:
+            pass
+    return preds  # raw predictions
+
+
+def _sigmoid_score(x, low=5.0, high=8.0, k=0.4):
+    import numpy as np
+    # Map value to [0,1] with smooth transition between low and high
+    # Center at midpoint
+    mid = (low + high) / 2.0
+    return 1.0 / (1.0 + np.exp(-k * (x - mid)))
+
+
+@st.cache_resource(show_spinner=False)
+def _get_admet_model():
+    try:
+        from admet_ai import ADMETModel
+        return ADMETModel()
+    except Exception:
+        return None
+
+
+def _predict_admet(smiles_list, endpoints):
+    model = _get_admet_model()
+    if model is None or not smiles_list:
+        return {e: [float("nan")] * len(smiles_list) for e in endpoints}
+    df = model.predict(smiles_list, batch_size=256)
+    out = {}
+    name_map = {
+        "Solubility": "Solubility",
+        "Hepatic Clearance": "Hepatic Clearance",
+        "Bioavailability": "Bioavailability",
+        "Clinical Toxicity": "Clinical Toxicity",
+    }
+    for e in endpoints:
+        col = name_map.get(e, e)
+        if col in df.columns:
+            out[e] = df[col].tolist()
+        else:
+            out[e] = [float("nan")] * len(smiles_list)
+    return out
+# === End helpers ===
 
 if __name__ == "__main__":
     main()
